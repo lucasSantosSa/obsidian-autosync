@@ -1,7 +1,7 @@
 #!/bin/bash
 # obsidian-sync — Auto-sync an Obsidian vault to a git remote
 
-SCRIPT_PATH="$(realpath "$0" 2>/dev/null || cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 OS="$(uname -s)"
 
 usage() {
