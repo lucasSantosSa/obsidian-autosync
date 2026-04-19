@@ -30,6 +30,9 @@ fi
 
 cd "$VAULT_DIR" || { echo "Cannot enter $VAULT_DIR"; exit 1; }
 
+# Resolve to absolute path so inotifywait works after cd
+VAULT_DIR="$(pwd)"
+
 echo "Starting sync for: $VAULT_DIR"
 git pull origin "$BRANCH"
 
