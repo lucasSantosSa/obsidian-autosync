@@ -139,8 +139,17 @@ cd "$VAULT_DIR" || { echo "Cannot enter $VAULT_DIR"; exit 1; }
 # Resolve to absolute path so the watcher works after cd
 VAULT_DIR="$(pwd)"
 
+safe_pull() {
+    # Abort any stale rebase state before pulling
+    if [[ -d ".git/rebase-merge" ]] || [[ -d ".git/rebase-apply" ]]; then
+        echo "Stale rebase state found — aborting..."
+        git rebase --abort 2>/dev/null || true
+    fi
+    git pull --rebase origin "$BRANCH"
+}
+
 echo "Starting sync for: $VAULT_DIR"
-git pull --rebase origin "$BRANCH"
+safe_pull
 
 watch_vault "$VAULT_DIR" | while read -r _; do
     sleep 5
@@ -150,5 +159,5 @@ watch_vault "$VAULT_DIR" | while read -r _; do
         git commit -m "Auto-sync: $(date '+%Y-%m-%d %H:%M:%S')"
         git push origin "$BRANCH"
     fi
-    git pull --rebase origin "$BRANCH"
+    safe_pull
 done
