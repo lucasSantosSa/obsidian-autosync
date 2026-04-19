@@ -34,7 +34,7 @@ Description=Obsidian Vault Auto-Sync
 After=network.target
 
 [Service]
-ExecStart=${SCRIPT_PATH} ${remote_url} ${vault_dir}
+ExecStart=${SCRIPT_PATH} ${remote_url} "${vault_dir}"
 Restart=on-failure
 RestartSec=10
 
