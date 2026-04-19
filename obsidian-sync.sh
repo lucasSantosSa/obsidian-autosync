@@ -140,7 +140,7 @@ cd "$VAULT_DIR" || { echo "Cannot enter $VAULT_DIR"; exit 1; }
 VAULT_DIR="$(pwd)"
 
 echo "Starting sync for: $VAULT_DIR"
-git pull origin "$BRANCH"
+git pull --rebase origin "$BRANCH"
 
 watch_vault "$VAULT_DIR" | while read -r _; do
     sleep 5
@@ -150,5 +150,5 @@ watch_vault "$VAULT_DIR" | while read -r _; do
         git commit -m "Auto-sync: $(date '+%Y-%m-%d %H:%M:%S')"
         git push origin "$BRANCH"
     fi
-    git pull origin "$BRANCH"
+    git pull --rebase origin "$BRANCH"
 done
