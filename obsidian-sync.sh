@@ -1,7 +1,8 @@
 #!/bin/bash
 # obsidian-sync — Auto-sync an Obsidian vault to a git remote
 
-SCRIPT_PATH="$(realpath "$0")"
+SCRIPT_PATH="$(realpath "$0" 2>/dev/null || cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+OS="$(uname -s)"
 
 usage() {
     cat <<EOF
@@ -10,25 +11,71 @@ Usage: $(basename "$0") [--install] <repo-url> [vault-dir]
   repo-url   Git remote URL of your Obsidian vault repo
   vault-dir  Local path for the vault (default: ~/Documents/Obsidian Vault)
 
-  --install  Install as a persistent systemd user service (survives terminal close)
+  --install  Install as a persistent background service (systemd on Linux, launchd on macOS)
 
 If vault-dir does not exist, the repo will be cloned there first.
 The script then watches for file changes and auto-commits/pushes to master.
 
-Dependencies: git, inotifywait (inotify-tools)
+Dependencies:
+  Linux : git, inotifywait (inotify-tools)
+  macOS : git, fswatch (brew install fswatch)
 EOF
     exit 1
+}
+
+check_deps() {
+    if [[ "$OS" == "Darwin" ]]; then
+        if ! command -v fswatch &>/dev/null; then
+            echo "Error: fswatch not found. Install it with: brew install fswatch"
+            exit 1
+        fi
+    else
+        if ! command -v inotifywait &>/dev/null; then
+            echo "Error: inotifywait not found. Install it with: sudo apt install inotify-tools"
+            exit 1
+        fi
+    fi
 }
 
 install_service() {
     local remote_url="$1"
     local vault_dir="$2"
-    local service_name="obsidian-sync"
-    local service_file="$HOME/.config/systemd/user/${service_name}.service"
 
-    mkdir -p "$HOME/.config/systemd/user"
-
-    cat > "$service_file" <<EOF
+    if [[ "$OS" == "Darwin" ]]; then
+        local plist="$HOME/Library/LaunchAgents/com.obsidian-sync.plist"
+        cat > "$plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.obsidian-sync</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${SCRIPT_PATH}</string>
+        <string>${remote_url}</string>
+        <string>${vault_dir}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/obsidian-sync.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/obsidian-sync.error.log</string>
+</dict>
+</plist>
+EOF
+        launchctl unload "$plist" 2>/dev/null
+        launchctl load "$plist"
+        echo "Service installed and started."
+        echo "  Logs   : tail -f /tmp/obsidian-sync.log"
+        echo "  Stop   : launchctl unload ~/Library/LaunchAgents/com.obsidian-sync.plist"
+    else
+        local service_file="$HOME/.config/systemd/user/obsidian-sync.service"
+        mkdir -p "$HOME/.config/systemd/user"
+        cat > "$service_file" <<EOF
 [Unit]
 Description=Obsidian Vault Auto-Sync
 After=network.target
@@ -41,14 +88,24 @@ RestartSec=10
 [Install]
 WantedBy=default.target
 EOF
+        systemctl --user daemon-reload
+        systemctl --user enable --now obsidian-sync
+        echo "Service installed and started."
+        echo "  Status : systemctl --user status obsidian-sync"
+        echo "  Logs   : journalctl --user -u obsidian-sync -f"
+        echo "  Stop   : systemctl --user stop obsidian-sync"
+        echo "  Disable: systemctl --user disable obsidian-sync"
+    fi
+}
 
-    systemctl --user daemon-reload
-    systemctl --user enable --now "$service_name"
-    echo "Service installed and started."
-    echo "  Status : systemctl --user status $service_name"
-    echo "  Logs   : journalctl --user -u $service_name -f"
-    echo "  Stop   : systemctl --user stop $service_name"
-    echo "  Disable: systemctl --user disable $service_name"
+watch_vault() {
+    if [[ "$OS" == "Darwin" ]]; then
+        fswatch -r -o "$1"
+    else
+        while inotifywait -r -e modify,create,delete,move "$1" >/dev/null 2>&1; do
+            echo "event"
+        done
+    fi
 }
 
 # Parse --install flag
@@ -69,6 +126,8 @@ if $INSTALL; then
     exit 0
 fi
 
+check_deps
+
 # Clone vault if it doesn't exist yet
 if [[ ! -d "$VAULT_DIR/.git" ]]; then
     echo "Cloning $REMOTE_URL → $VAULT_DIR"
@@ -77,13 +136,13 @@ fi
 
 cd "$VAULT_DIR" || { echo "Cannot enter $VAULT_DIR"; exit 1; }
 
-# Resolve to absolute path so inotifywait works after cd
+# Resolve to absolute path so the watcher works after cd
 VAULT_DIR="$(pwd)"
 
 echo "Starting sync for: $VAULT_DIR"
 git pull origin "$BRANCH"
 
-while inotifywait -r -e modify,create,delete,move "$VAULT_DIR"; do
+watch_vault "$VAULT_DIR" | while read -r _; do
     sleep 5
     git add .
     if ! git diff-index --quiet HEAD --; then
